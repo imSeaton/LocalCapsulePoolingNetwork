@@ -1,0 +1,146 @@
+import sys
+from pygsp import graphs
+import numpy as np
+from models import *
+import argparse
+import torch
+import torch.nn as nn
+import matplotlib.pyplot as plt
+import random
+
+
+parser = argparse.ArgumentParser(description='GST')
+parser.add_argument('--data', default='grid', type=str,
+                    help='dataset type')
+parser.add_argument('--seed', type=int, default=7, help='seed')
+parser.add_argument('--num-hidden', type=int, default=32, help='hidden size')
+
+parser.add_argument("--gpu", type=int, default=-1)
+parser.add_argument("--ln", action='store_true')
+parser.add_argument("--test", action='store_true')
+parser.add_argument("--ratio", default=0.5, help='Pool Ratio')
+parser.add_argument("--recon_adj", default=False, help='loss of reconstruction adj')
+parser.add_argument('--mab', default='MAB', type=str,
+                        choices=['MAB', 'Graph_MAB'],
+                        help='MAB type')
+args = parser.parse_args()
+# Random Seed
+random.seed(args.seed)
+np.random.seed(args.seed)
+torch.manual_seed(args.seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
+# Set Device
+device = 'cuda'
+
+dataset = args.data
+# load data
+if dataset == 'ring':
+    G = graphs.Ring(N=200)
+elif dataset == 'grid':
+    G = graphs.Grid2d(N1=30, N2=30)
+elif dataset == 'twomoon':
+    G = graphs.TwoMoons('synthesized', sigmad=0.0, seed=7)
+
+X = G.coords.astype(np.float32)
+print(X.shape)
+A = G.W
+y = np.zeros(X.shape[0])  # X[:,0] + X[:,1]
+n_nodes = A.shape[0]
+
+args.num_features = 2
+
+# model_list = ['TopkPool', 'DiffPool', 'MinCutPool', 'GST']
+# model_list = ['GST', 'TopkPool',  'SAGPool', 'ASAP', 'CapsulePool']
+model_list = ['MinCutPool', 'TopkPool',  'SAGPool', 'ASAP', 'CapsulePool']
+# model_dict = {'TopkPool': TOPKPOOL_AE,
+#               'DiffPool': DIFFPOOL_AE,
+#               'MinCutPool': MINCUTPOOL_AE,
+#               'GST': GST_AE}
+# model_dict = {'GST': GST_AE,
+#              'TopkPool': TOPKPOOL_AE,
+#               'SAGPool': SAGPOOL_AE,
+#               'ASAP': ASAP_AE,
+#               'CapsulePool': CapsulePool_AE,
+#               }
+model_dict = {'MinCutPool': MINCUTPOOL_AE,
+             'TopkPool': TOPKPOOL_AE,
+              'SAGPool': SAGPOOL_AE,
+              'ASAP': ASAP_AE,
+              'CapsulePool': CapsulePool_AE,
+              }
+
+
+coo = A.tocoo()
+values = coo.data
+indices = np.vstack((coo.row, coo.col))
+
+i = torch.LongTensor(indices)
+v = torch.FloatTensor(values)
+
+A = torch.sparse.FloatTensor(i, v, torch.Size(coo.shape))
+X = torch.FloatTensor(X)
+batch = torch.LongTensor([0 for _ in range(X.shape[0])])
+A = A.coalesce().indices()
+
+criterion = nn.MSELoss()
+
+preds = []
+losses = []
+for name in model_list:
+    model = model_dict[name](args, n_nodes)
+    model = model.to(device)
+    try:
+        model.load_state_dict(torch.load("checkpoints/best_{}_{}_{}.pth".format(args.data, name, args.ratio)))
+    except:
+        print("Checkpoint of {} missing for data {}_{}".format(name, args.data, args.ratio))
+        assert False
+    model.eval()
+    with torch.no_grad():
+        X, A, batch = X.to(device), A.to(device), batch.to(device)
+        print(model(X, A, batch))
+        X_out, edge_index, _, _ = model(X, A, batch)
+        loss = criterion(X, X_out)
+        preds.append(X_out.cpu())
+        losses.append(loss.item())
+
+X = X.cpu()
+# PLOTS
+num_models = len(model_list)
+plt.figure(figsize=(4*(num_models+1), 4))
+pad = 0.1
+x_min, x_max = X[:, 0].min() - pad, X[:, 0].max() + pad
+y_min, y_max = X[:, 1].min() - pad, X[:, 1].max() + pad
+colors = X[:, 0] + X[:, 1]
+plt.subplot(1, num_models+1, 1)
+plt.scatter(*X[:, :2].T, c=colors, s=8, zorder=2)
+plt.xlim(x_min, x_max)
+plt.ylim(y_min, y_max)
+plt.title('Original', y=-0.1)
+if args.data == 'ring':
+    plt.axvline(0, c='k', alpha=0.2)
+    plt.axhline(0, c='k', alpha=0.2)
+plt.xticks([]),plt.yticks([])
+for i in range(num_models):
+    plt.subplot(1, num_models+1, 2+i)
+    X_out = preds[i]
+    plt.scatter(*X_out[:, :2].T, c=colors, s=8, zorder=2)
+    plt.xlim(x_min, x_max)
+    plt.ylim(y_min, y_max)
+    method_name = model_list[i]
+    if method_name == 'CapsulePool':
+        method_name = 'LCP'
+    plt.title(method_name, y=-0.1)
+    if args.data == 'ring':
+        plt.axvline(0, c='k', alpha=0.2)
+        plt.axhline(0, c='k', alpha=0.2)
+    plt.xticks([]),plt.yticks([])
+plt.tight_layout()
+plt.savefig("results/total_figure_{}_{}.jpg".format(args.data, args.ratio))
+print("{} Saved.".format("results/total_figure_{}.jpg".format(args.data)))
+print("Losses: ", losses)
+
