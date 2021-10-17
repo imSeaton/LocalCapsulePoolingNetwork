@@ -6,7 +6,7 @@ from torch_geometric.nn import GCNConv, DenseGCNConv, dense_diff_pool, TopKPooli
 # from ASAP import ASAPooling
 from DenseGCNConv import DenseGCNConv as DGCNConv
 import torch.nn.functional as F
-from utils import dense_readout, readout_1
+from utils import dense_readout, common_readout
 from torch_scatter import scatter_mean, scatter_max
 from ASAP.asap_pool import ASAP_Pooling
 
@@ -323,19 +323,19 @@ class TopKPool(torch.nn.Module):
         # Pooling
         res = x
         x, edge_index, _, batch, perm, _ = self.pool_1(x, edge_index, None, batch)
-        graph_representation = graph_representation + readout_1(x, batch)
+        graph_representation = graph_representation + common_readout(x, batch)
 
         x = F.tanh(self.conv_3(x, edge_index))
         x, edge_index, _, batch, perm, _ = self.pool_2(x, edge_index, None, batch)
         pooled_x = x
         pooled_edge_index = edge_index
-        graph_representation = graph_representation + readout_1(x, batch)
+        graph_representation = graph_representation + common_readout(x, batch)
 
         x = F.tanh(self.conv_4(x, edge_index))
         x, edge_index, _, batch, perm, _ = self.pool_3(x, edge_index, None, batch)
         third_x = x
         third_edge_index = edge_index
-        graph_representation = graph_representation + readout_1(x, batch)
+        graph_representation = graph_representation + common_readout(x, batch)
 
         x = F.relu(self.lin_1(graph_representation))
         x = F.dropout(x, p=self.dropout_att, training=self.training)
@@ -392,19 +392,19 @@ class SAGPool(torch.nn.Module):
         # Pooling
         res = x
         x, edge_index, _, batch, perm, _ = self.pool_1(x, edge_index, None, batch)
-        graph_representation = graph_representation + readout_1(x, batch)
+        graph_representation = graph_representation + common_readout(x, batch)
 
         x = F.tanh(self.conv_3(x, edge_index))
         x, edge_index, _, batch, perm, _ = self.pool_2(x, edge_index, None, batch)
         pooled_x = x
         pooled_edge_index = edge_index
-        graph_representation = graph_representation + readout_1(x, batch)
+        graph_representation = graph_representation + common_readout(x, batch)
 
         x = F.tanh(self.conv_4(x, edge_index))
         x, edge_index, _, batch, perm, _ = self.pool_3(x, edge_index, None, batch)
         third_x = x
         third_edge_index = edge_index
-        graph_representation = graph_representation + readout_1(x, batch)
+        graph_representation = graph_representation + common_readout(x, batch)
 
         x = F.relu(self.lin_1(graph_representation))
         x = F.dropout(x, p=self.dropout_att, training=self.training)
@@ -476,7 +476,7 @@ class SAGPoolG(torch.nn.Module):
         third_edge_index = edge_index
         # print(f"x.shape {x.shape}")
         # print(f"batch.shape {batch.shape}")
-        graph_representation = readout_1(x, batch)
+        graph_representation = common_readout(x, batch)
         x = F.relu(self.lin_1(graph_representation))
         x = F.dropout(x, p=self.dropout_att, training=self.training)
         x = self.lin_2(x)
@@ -517,17 +517,17 @@ class ASAP_Pool(torch.nn.Module):
         x, edge_index, batch = data.x, data.edge_index, data.batch
         x = F.relu(self.conv1(x, edge_index))
         x, edge_index, edge_weight, batch, perm = self.pool1(x=x, edge_index=edge_index, edge_weight=None, batch=batch)
-        xs = readout_1(x, batch)
+        xs = common_readout(x, batch)
         # for conv, pool in zip(self.convs, self.pools):
         #     x = F.relu(conv(x=x, edge_index=edge_index, edge_weight=edge_weight))
         #     x, edge_index, edge_weight, batch, perm = pool(x=x, edge_index=edge_index, edge_weight=edge_weight, batch=batch)
-        #     xs += readout_1(x, batch)
+        #     xs += common_readout(x, batch)
         pooled_x = 0
         pooled_edge_index = 0
         for i in range(self.num_layers-1):
             x = F.relu(self.convs[i](x=x, edge_index=edge_index, edge_weight=edge_weight))
             x, edge_index, edge_weight, batch, perm = self.pools[i](x=x, edge_index=edge_index, edge_weight=edge_weight, batch=batch)
-            xs += readout_1(x, batch)
+            xs += common_readout(x, batch)
             if i == 0:
                 pooled_x = x
                 pooled_edge_index = edge_index
@@ -572,11 +572,11 @@ class GIN(nn.Module):
         graph_representation = x.new_zeros(batch.max().item() + 1, 3 * self.hidden)
         x = F.relu(self.conv_1(x, edge_index))
         x = F.relu(self.conv_2(x, edge_index))
-        graph_representation += readout_1(x, batch)
+        graph_representation += common_readout(x, batch)
         x = F.relu(self.conv_3(x, edge_index))
-        graph_representation += readout_1(x, batch)
+        graph_representation += common_readout(x, batch)
         x = F.relu(self.conv_4(x, edge_index))
-        graph_representation += readout_1(x, batch)
+        graph_representation += common_readout(x, batch)
         x = F.relu(self.lin_1(graph_representation))
         x = F.dropout(x, p=self.dropout_att, training=self.training)
         x = self.lin_2(x)
@@ -610,11 +610,11 @@ class GCN(nn.Module):
         graph_representation = x.new_zeros(batch.max().item() + 1, 3 * self.hidden)
         x = F.relu(self.conv_1(x, edge_index))
         # x = F.relu(self.conv_2(x, edge_index))
-        graph_representation += readout_1(x, batch)
+        graph_representation += common_readout(x, batch)
         x = F.relu(self.conv_3(x, edge_index))
-        graph_representation += readout_1(x, batch)
+        graph_representation += common_readout(x, batch)
         x = F.relu(self.conv_4(x, edge_index))
-        graph_representation += readout_1(x, batch)
+        graph_representation += common_readout(x, batch)
         x = F.relu(self.lin_1(graph_representation))
         x = F.dropout(x, p=self.dropout_att, training=self.training)
         x = self.lin_2(x)

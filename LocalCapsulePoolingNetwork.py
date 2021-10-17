@@ -3,29 +3,23 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Linear
 from torch_geometric.nn import GCNConv
-from LocalPooling import LocalPooling
+from LocalCapsulePooling import LocalCapsulePooling
 from torch_scatter import scatter_mean, scatter_max, scatter_add, scatter_softmax
-from utils import squash_1, squash_2, readout_1, readout_2, sparse_to_dense, F_norm_loss, F_norm_x_loss
+from utils import squash_1, squash_2, common_readout, readout_2, sparse_to_dense, get_loss_stability
 from disentangle import LinearDisentangle
 from torch_geometric.utils import add_remaining_self_loops, remove_self_loops
 
 
-class CapsulePoolingGraphNetwork(nn.Module):
+class LocalCapsulePoolingNetwork(nn.Module):
     def __init__(self, dataset, num_layers, hidden, ratio=0.5, dropout_att=0.5,
-                 local_pool_mode='mode_1',
-                 readout_mode='XU',
+                 readout_mode='TAR',
                  dataset_name=''):
-        super(CapsulePoolingGraphNetwork, self).__init__()
+        super(LocalCapsulePoolingNetwork, self).__init__()
         self.hidden = hidden
         self.ratio = ratio
         self.dropout_att = dropout_att
         self.num_layers = num_layers
-        self.local_pooling_mode = local_pool_mode
         self.readout_mode = readout_mode
-        # if self.readout_mode == "X":
-        #     self.readout = readout_1
-        # elif self.readout_mode == "XU":
-        #     self.readout = self.ReadoutAttenLinear
         if dataset_name in ['DD', 'NCI109', 'NCI1', 'MUTAG', 'ENZYMES', 'FRANKENSTEIN', 'REDDIT-BINARY']:
             self.squash = squash_1
             from utils import squash_1 as squash
@@ -34,7 +28,6 @@ class CapsulePoolingGraphNetwork(nn.Module):
             from utils import squash_2 as squash
         else:
             print('Wrong Dataset')
-        # print(f"self.squash {self.squash}")
         self.dataset_name = dataset_name
         # Todo 这里需要判断是否需要参数化形式
 
@@ -48,7 +41,7 @@ class CapsulePoolingGraphNetwork(nn.Module):
         # Local Pooling
         # self.conv1 = GCNConv(hidden, hidden)
         self.conv1 = GCNConv(dataset.num_features, hidden)
-        self.pool1 = LocalPooling(hidden, ratio, dropout_att, local_pool_mode=self.local_pooling_mode, dataset_name=self.dataset_name)
+        self.pool1 = LocalCapsulePooling(hidden, ratio, dropout_att, dataset_name=self.dataset_name)
         self.convs = torch.nn.ModuleList()
         self.pools = torch.nn.ModuleList()
         self.bns = torch.nn.ModuleList()
@@ -57,14 +50,14 @@ class CapsulePoolingGraphNetwork(nn.Module):
         self.pools.append(self.pool1)
         for i in range(1, num_layers):
             self.convs.append(GCNConv(hidden, hidden))
-            self.pools.append(LocalPooling(hidden, ratio, dropout_att, local_pool_mode=self.local_pooling_mode, dataset_name=self.dataset_name))
+            self.pools.append(LocalCapsulePooling(hidden, ratio, dropout_att,  dataset_name=self.dataset_name))
             self.bns.append(nn.BatchNorm1d(hidden))
         # readout中的参数化向量
-        self.readout_atten_linear_lst = []
+        self.task_aware_readout_linear_lst = []
         for i in range(num_layers):
-            self.readout_atten_linear_lst.append(nn.Parameter(torch.Tensor(hidden, 1)))
+            self.task_aware_readout_linear_lst.append(nn.Parameter(torch.Tensor(hidden, 1)))
 
-        # self.lin1 = Linear(1 * hidden, hidden)  # 3*hidden due to readout layer
+        # 3*hidden due to readout layer
         self.lin1 = Linear(3*hidden, hidden)
         self.lin2 = Linear(hidden, dataset.num_classes)
         self.reset_parameters()
@@ -78,9 +71,10 @@ class CapsulePoolingGraphNetwork(nn.Module):
             bn.reset_parameters()
         self.lin1.reset_parameters()
         self.lin2.reset_parameters()
-        for i in range(self.num_layers):
-            # uniform(self.hidden, self.readout_atten_linear_lst[i])
-            torch.nn.init.xavier_normal_(self.readout_atten_linear_lst[i])
+        if self.readout_mode == "TAR":
+            for i in range(self.num_layers):
+                # uniform(self.hidden, self.readout_atten_linear_lst[i])
+                torch.nn.init.xavier_normal_(self.task_aware_readout_linear_lst[i])
 
 
     def forward(self, data):
@@ -100,26 +94,23 @@ class CapsulePoolingGraphNetwork(nn.Module):
         #     out.append(temp)
         # x = torch.cat(out, dim=-1)
         #
-        # batch_normalization
-        # x = self.bn_disen_1(x)
-        # 两种不同的readout机制：1、拼接所有层的结果， 2、加和所有层的结果
         graph_representation = x.new_zeros(batch.max().item()+1, 3*self.hidden)
-        # 两种辅助训练损失：1、S与X的自分布相同 2、XtX各层之间每个维度多节点之间的分布相同
-        SSt_XXt_loss = x.new_zeros(1)
-        x_loss = x.new_zeros(1)
+        # 池化前后分布相同
+        loss_stability = x.new_zeros(1)
 
         # 给第一次GCN加上自环
         edge_index, edge_weight = remove_self_loops(edge_index=edge_index, edge_attr=edge_weight)
         num_nodes = scatter_add(batch.new_ones(x.size(0)), batch, dim=0)
         edge_index, edge_weight = add_remaining_self_loops(edge_index=edge_index, edge_weight=edge_weight,
                                                            fill_value=1, num_nodes=num_nodes.sum())
-        pooled_x = x
-        pooled_edge_index = edge_index
+        # third_x is used to draw the pooled edge_index of graph
+        third_x = x
+        third_edge_index = edge_index
         for i in range(self.num_layers):
-            if i == 0:
-                print(f"x.shape {x.shape}")
-                print(f"self.convs[0] {self.convs[0]}")
-            x = self.squash(self.convs[i](x=x, edge_index=edge_index, edge_weight=edge_weight))
+            x = self.convs[i](x=x, edge_index=edge_index, edge_weight=edge_weight)
+            # x = self.bns[i](x)
+            x = self.squash(x)
+            # x = self.squash(self.bns[i](self.convs[i](x=x, edge_index=edge_index, edge_weight=edge_weight)))
             # x = F.relu(self.convs[i](x=x, edge_index=edge_index, edge_weight=edge_weight))
             N = x.shape[0]
             x_l_above = x
@@ -128,45 +119,36 @@ class CapsulePoolingGraphNetwork(nn.Module):
             # x: (new_num_nodes, hidden)
             x, edge_index, edge_weight, batch, S_index, S_value, perm = self.pools[i](x=x, edge_index=edge_index, edge_weight=edge_weight,
                                                            batch=batch)
-            if i == 1:
-                pooled_x = x
-                pooled_edge_index = edge_index
-            third_x = x
-            third_edge_index = edge_index
-            # BN层
+            # # BN层
             # x = self.bns[i](x)
+            # third_x is used to draw the pooled edge_index of graph
+            if i == 2:
+                third_x = x
+                third_edge_index = edge_index
             #   SSt与XXt的F范数损失
             kN = x.shape[0]
-            temp_SSt_XXt_loss = F_norm_loss(S_index=S_index, S_value=S_value, X=x_l_above, N=N, kN=kN,
-                                            edge_index=edge_index, edge_weight=edge_weight)
-            SSt_XXt_loss = SSt_XXt_loss + temp_SSt_XXt_loss
             # 每层的权重
-            temp_norm_x_loss = F_norm_x_loss(x_l_above, x)
-            x_loss = x_loss + temp_norm_x_loss
-            #   AXu作为权重 -->(num_nodes, 1)
-            #   加权聚合 --> (num_graphs, hidden)
-            # graph_representation = graph_representation + readout_1(x, batch)
+            temp_loss_stability = get_loss_stability(x_l_above, x)
+            loss_stability = loss_stability + temp_loss_stability
             # (num_graphs, 3 * hidden)
-            graph_representation = graph_representation + self.ReadoutAttenLinear(x, edge_index, edge_weight, batch, i)
+            if self.readout_mode == "Common":
+                graph_representation = graph_representation + common_readout(x, batch)
+            elif self.readout_mode == "TAR":
+                graph_representation = graph_representation + self.ReadoutAwareReadout(x, edge_index, edge_weight, batch, i)
+
         x = F.relu(self.lin1(graph_representation))
         x = F.dropout(x, p=self.dropout_att, training=self.training)
         x = self.lin2(x)
         # (num_graphs, num_classes)
         out = F.log_softmax(x, dim=-1)
-        # return out, SSt_XXt_loss
-        return out, x_loss, third_x, third_edge_index
-        # return out, x_loss, pooled_x, pooled_edge_index
+        return out, loss_stability, third_x, third_edge_index
 
-    def ReadoutAttenLinear(self, x, edge_index, edge_weight, batch, i):
+    def ReadoutAwareReadout(self, x, edge_index, edge_weight, batch, i):
         # batch个graph构成的邻接矩阵
-        # A = sparse_to_dense(edge_index, edge_weight, m=x.shape[0], n=x.shape[0]).to(x.device)
-        #   Xu
-        #   (num_nodes, hidden) @ (hidden, 1)
-        #   ->(num_nodes, 1)
-        self.readout_atten_linear_lst[i] = self.readout_atten_linear_lst[i].to(x.device)
+        self.task_aware_readout_linear_lst[i] = self.task_aware_readout_linear_lst[i].to(x.device)
         # node_attens = A @ x @ self.readout_atten_linear_lst[i].to(x.device)
         # (num_nodes, 1)
-        node_attens = x @ self.readout_atten_linear_lst[i].to(x.device)
+        node_attens = x @ self.task_aware_readout_linear_lst[i]
         # 加权求和
         # (num_nodes, hidden)
         nodes_wegihted = node_attens * x

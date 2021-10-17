@@ -212,7 +212,7 @@ class CapsulePool_AE(torch.nn.Module):
 
         # x, adj, mc_loss, o_loss = dense_mincut_pool(x, adj, s, mask)
 
-        x, adj, batch, perm, s, x_loss = self.pool(x, edge_index, batch=batch)
+        x, adj, batch, perm, s, loss_stability = self.pool(x, edge_index, batch=batch)
 
         # Upsampling
         # 900 x 32
@@ -233,7 +233,7 @@ class CapsulePool_AE(torch.nn.Module):
         x = F.tanh(self.conv4(x, edge_index))
         x = self.conv5(x, edge_index)
 
-        return x, adj_out, x_loss*0.00001, 0
+        return x, adj_out, loss_stability*0.00001, 0
 
 
 class DIFFPOOL_AE(torch.nn.Module):

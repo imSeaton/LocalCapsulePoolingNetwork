@@ -1,7 +1,7 @@
 import numpy as np
 from other_models import *
 from torch_geometric.data import DataLoader, DenseDataLoader as DenseLoader
-from CapsulePoolingGraphNetwork import CapsulePoolingGraphNetwork
+from LocalCapsulePoolingNetwork import LocalCapsulePoolingNetwork
 from data_processing import get_dataset
 import numpy as np
 import random
@@ -13,7 +13,7 @@ from torch_geometric.utils import dense_to_sparse
 parser = argparse.ArgumentParser(description='Draw Graph')
 parser.add_argument('-data', dest='dataset', default='PROTEINS', type=str,
                     help='dataset type')
-parser.add_argument('-model', dest='model', default='CapsulePoolingGraphNetwork', type=str,
+parser.add_argument('-model', dest='model', default='LocalCapsulePoolingNetwork', type=str,
                     help='model to test')
 parser.add_argument('-seed', dest='seed', type=int, default=7, help='seed')
 parser.add_argument('-hidden', dest='hidden', type=int, default=128, help='hidden size')
@@ -53,8 +53,8 @@ def addModel(model_name):
     :param model_name:
     :return:
     """
-    if model_name == 'CapsulePoolingGraphNetwork':
-        model = CapsulePoolingGraphNetwork(
+    if model_name == 'LocalCapsulePoolingNetwork':
+        model = LocalCapsulePoolingNetwork(
             dataset=dataset,
             num_layers=3,
             hidden=args.hidden,
@@ -140,21 +140,21 @@ def data_transfer(adj):
     # print(f"edge_index {edge_index}")
     return edge_index, _
 
-model_lst = ['DiffPool', 'MinCutPool', 'TopKPool', 'SAGPool', 'ASAP', 'CapsulePoolingGraphNetwork']
+model_lst = ['DiffPool', 'MinCutPool', 'TopKPool', 'SAGPool', 'ASAP', 'LocalCapsulePoolingNetwork']
 color_dict = {
 'DiffPool': 'orangered',
 'MinCutPool': 'coral',
 'TopKPool': 'yellow',
 'SAGPool': 'chartreuse',
 'ASAP':'mediumorchid',
-'CapsulePoolingGraphNetwork':'deeppink'
+'LocalCapsulePoolingNetwork':'deeppink'
 }
 plt.figure(figsize=(4*7, 4))
 i = 0
 for model_name in model_lst:
     i += 1
     # 根据不同的model_name 判断是否需要dense类型的data
-    if model_name in ['CapsulePoolingGraphNetwork', 'SAGPool', 'TopKPool', 'ASAP']:
+    if model_name in ['LocalCapsulePoolingNetwork', 'SAGPool', 'TopKPool', 'ASAP']:
         sparse = True
     elif model_name in ['MinCutPool', 'DiffPool']:
         sparse = False
@@ -162,7 +162,7 @@ for model_name in model_lst:
         print(f"Error Model")
     dataset = get_dataset(args.dataset, sparse=sparse)
 
-    if model_name in ['CapsulePoolingGraphNetwork', 'SAGPool', 'TopKPool', 'ASAP']:
+    if model_name in ['LocalCapsulePoolingNetwork', 'SAGPool', 'TopKPool', 'ASAP']:
         loader = DataLoader(dataset, batch_size=1, shuffle=False)
     elif model_name in ['MinCutPool', 'DiffPool']:
         # 用dataloader加载数据

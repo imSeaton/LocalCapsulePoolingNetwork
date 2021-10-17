@@ -8,20 +8,20 @@ from utils import squash_1, squash_2, graph_connectivity
 from SparseGCNConv import SparseGCNConv
 from torch_geometric.nn import GCNConv
 
-class LocalPooling(nn.Module):
+class LocalCapsulePooling(nn.Module):
     """输入一个batch的graph，对其进行池化，选出重要的cluster"""
 
-    def __init__(self, hidden, ratio, dropout_att=0, local_pool_mode='mode_1', dataset_name='DD'):
-        super(LocalPooling, self).__init__()
+    def __init__(self, hidden, ratio, dropout_att=0, dataset_name='DD'):
+        super(LocalCapsulePooling, self).__init__()
         self.in_channels = hidden
         self.out_channels = hidden
         self.ratio = ratio
         # self.negative_slope = negative_slope
         self.dropout_att = dropout_att
-        self.local_pool_mode = local_pool_mode
         # self.gcn_transform = GCNConv(self.in_channels, self.out_channels)
         self.gcn_transform = GCNConv(self.in_channels, self.out_channels)
         self.bn_feat = nn.BatchNorm1d(hidden)
+        self.bn_feat_2 = nn.BatchNorm1d(hidden)
         self.score_add = nn.Linear(self.in_channels, 1)
         if dataset_name in ['DD', 'MUTAG', 'NCI109', 'NCI1', 'ENZYMES', 'FRANKENSTEIN', 'REDDIT-BINARY',]:
             self.squash = squash_1
@@ -42,7 +42,7 @@ class LocalPooling(nn.Module):
         # ToDO: 这里可以看需要是否删除
         x = x.unsqueeze(-1) if x.dim() == 1 else x
         fill_value = 1
-        x = self.bn_feat(x)
+        # x = self.bn_feat(x)
         # 一个batch中每个graph中节点的数量
         num_nodes = scatter_add(batch.new_ones(x.size(0)), batch, dim=0)
         # ToDo: 这部分自环还是需要考虑的，添加之后会影响每个节点到高层的连接
@@ -55,6 +55,7 @@ class LocalPooling(nn.Module):
         # 一层GCN
         # ToDo
         x_pool_j = self.gcn_transform(x=x, edge_index=edge_index, edge_weight=edge_weight)
+        x_pool_j = self.bn_feat(x_pool_j)
         x_pool_j = self.squash(x_pool_j, dim=-1)
         # print(f"x_pool_j.grad {x_pool_j.requires_grad} \t {x_pool_j.grad}\t\t 'x_pool_j[0][:5]' {x_pool_j[0][:2].data}")
         # x_pool_j = F.relu(x_pool_j)
@@ -100,6 +101,7 @@ class LocalPooling(nn.Module):
         # ToDo 这里可以考虑加一个好的残差连接
         # cluster_representation += x
         # (N, F)
+        cluster_representation = self.bn_feat_2(cluster_representation)
         cluster_representation = self.squash(cluster_representation)
         # cluster_representation = F.relu(cluster_representation)
         # print(f"cluster_representation.shape {cluster_representation.shape}")
@@ -109,36 +111,6 @@ class LocalPooling(nn.Module):
         # (N)
         cluster_score = cluster_representation.norm(dim=-1)
         degree = scatter_add(src=edge_weight, index=edge_index[0], dim=0)
-        if self.local_pool_mode == 'mode_1':
-            # 仅仅考虑节点特征长度
-            cluster_score = cluster_score
-        elif self.local_pool_mode == 'mode_2':
-            # 考虑节点特征长度, 并且用节点度修正
-            cluster_score = cluster_score / (degree+1e-8)
-
-        elif self.local_pool_mode == 'mode_3':
-            # 考虑修正后节点特征长度, 并且上节点度数
-            cluster_score = cluster_score / (degree+1e-8) + degree
-
-        elif self.local_pool_mode == 'mode_4':
-            # 考虑未修正节点特征长度, 并且上节点度数
-            cluster_score = cluster_score + degree
-
-        elif self.local_pool_mode == 'mode_5':
-            # 将每个特征向量映射到1维，类似全局池化，并且与修正后的节点特征得分相加
-            cluster_score = self.score_add(cluster_representation).squeeze(dim=-1) + cluster_score / (degree+1e-8)
-
-        elif self.local_pool_mode == 'mode_6':
-            # 将每个特征向量映射到1维，并且与修正后的节点特征得分相加，再加上节点度数
-            cluster_score = self.score_add(cluster_representation).squeeze(dim=-1) + cluster_score / (degree+1e-8) + degree
-
-        elif self.local_pool_mode == 'mode_7':
-            # 将每个特征向量映射到1维，并且加上未修正的节点特征向量长度
-            cluster_score = self.score_add(cluster_representation).squeeze(dim=-1) + cluster_score
-
-        elif self.local_pool_mode == 'mode_8':
-            # 将每个特征向量映射到1维，并且加上未修正的节点特征向量长度 再加上节点度数
-            cluster_score = self.score_add(cluster_representation).squeeze(dim=-1) + cluster_score + degree
 
         # (ratio*N)
         perm = topk(x=cluster_score, ratio=self.ratio, batch=batch)

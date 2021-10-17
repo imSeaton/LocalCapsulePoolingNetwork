@@ -8,7 +8,7 @@ from torch.nn import functional as F
 from sklearn.model_selection import KFold
 from torch_geometric.data import DataLoader, DenseDataLoader as DenseLoader
 from torch_geometric.datasets import TUDataset
-from CapsulePoolingGraphNetwork import CapsulePoolingGraphNetwork
+from LocalCapsulePoolingNetwork import LocalCapsulePoolingNetwork
 from utils import margin_loss
 from data_processing import get_dataset
 from other_models import *
@@ -25,15 +25,8 @@ class Trainer(object):
         # set GPU
         if self.p.gpu != '-1' and torch.cuda.is_available():
             self.device = torch.device('cuda')
-            # torch.cuda.manual_seed(seed)
-            # torch.cuda.manual_seed_all(seed)
-            # torch.cuda.set_rng_state(torch.cuda.get_rng_state())
-            # torch.backends.cudnn.deterministic = True
-
         else:
             self.device = torch.device('cpu')
-        # self.device = torch.device('cpu')
-        # build the data
         self.p.use_node_attr = (self.p.dataset == 'FRANKENSTEIN')
         self.loadData(self.p.model)
 
@@ -43,9 +36,6 @@ class Trainer(object):
 
     # load data
     def loadData(self, model):
-        # path = osp.join(osp.dirname(osp.realpath(__file__)), '.', 'data', self.p.dataset)
-        # path = "../data/" + self.p.dataset
-        # dataset = TUDataset(path, self.p.dataset, use_node_attr=self.p.use_node_attr)
         """
         对于生物数据，特征第一维度加上节点度数；
         对于社交数据，特征变成degree的onehot编码
@@ -53,27 +43,25 @@ class Trainer(object):
 
         如果模型是MinCutPool，则把所有节点transformer成dense类型
         """
-        if model in ['CapsulePoolingGraphNetwork', 'SAGPool', 'SAGPoolG',  'TopKPool', 'ASAP', 'GIN', 'GCN']:
+        if model in ['LocalCapsulePoolingNetwork', 'SAGPool', 'SAGPoolG',  'TopKPool', 'ASAP', 'GIN', 'GCN']:
             sparse = True
         elif model in ['MinCutPool', 'DiffPool']:
             sparse = False
         else:
-            print(f"Error Model")
+            print(f"Error Model! Please input the right model name!")
             return None
         dataset = get_dataset(self.p.dataset, sparse=sparse)
-        # dataset.data.edge_attr = None
         self.data = dataset
 
     # load model
     def addModel(self):
-        if self.p.model == 'CapsulePoolingGraphNetwork':
-            model = CapsulePoolingGraphNetwork(
+        if self.p.model == 'LocalCapsulePoolingNetwork':
+            model = LocalCapsulePoolingNetwork(
                     dataset=self.data,
                     num_layers=self.p.num_layers,
                     hidden=self.p.hid_dim,
                     ratio=self.p.ratio,
                     dropout_att=self.p.dropout_att,
-                    local_pool_mode=self.p.local_pool_mode,
                     readout_mode=self.p.readout_mode,
                     dataset_name = self.p.dataset
                 )
@@ -155,19 +143,11 @@ class Trainer(object):
             # shape of ground_truth: (batch)
             ground_truth = data.y.clone()
             # shape of out: (batch, num_target)
-            # out, SSt_XXt_loss = self.model(data)
             out, aux_loss, pooled_x, pooled_edge_index = self.model(data)
             # 对一个graph上的平均 loss进行回传
             loss = F.nll_loss(out, ground_truth.view(-1)) + aux_loss * self.p.alpha
-            # loss = F.nll_loss(out, ground_truth.view(-1)) + SSt_XXt_loss * self.p.alpha
-            # print(f"-----------------------------------")
-            # print(f"loss  {loss}")
-            # print(f"x_loss {x_loss* self.p.alpha}")
-            # print(f"SSt_XXt_loss {SSt_XXt_loss * self.p.alpha}")
-            # loss = F.nll_loss(out, ground_truth.view(-1)) + x_loss * self.p.alpha
             loss.backward()
-            # self.num_graphs 返回每个batch（data）中有多少个graph
-            # 所以这个loss应该是单个graph的loss
+            # 单个graph的loss * batch中graph的数量
             total_loss += loss.item() * self.num_graphs(data)
             pred = out.max(1)[1]
             correct += pred.eq(ground_truth.view(-1)).sum().item()
@@ -184,14 +164,13 @@ class Trainer(object):
         for data in loader:
             data = data.to(self.device)
             with torch.no_grad():
-                out, x_loss, pooled_x, pooled_edge_index = self.model(data)
-                loss = F.nll_loss(out, data.y.view(-1)) + x_loss * self.p.alpha
+                out, loss_stability, pooled_x, pooled_edge_index = self.model(data)
+                loss = F.nll_loss(out, data.y.view(-1)) + loss_stability * self.p.alpha
                 pred = out.max(1)[1]
             total_loss += loss.item() * self.num_graphs(data)
             correct += pred.eq(data.y.view(-1)).sum().item()
         predict_acc = correct / len(loader.dataset)
         predict_loss = total_loss / len(loader.dataset)
-        # print(f"seed/fold {seed}/{fold}  test_acc: {test_acc:.4f}")
         return predict_acc*100, predict_loss
 
     # save model locally
@@ -204,7 +183,6 @@ class Trainer(object):
         torch.save(state, save_path)
 
     # load model from path
-    # Q: 这部分加载训练好的模型和优化器的代码还没有遇到过
     def load_model(self, load_path):
         state = torch.load(load_path)
         self.model.load_state_dict(state['state_dict'])
@@ -242,14 +220,7 @@ class Trainer(object):
 
         makeDirectory('torch_saved/')
         save_path = 'torch_saved/{}'.format(self.p.name)
-        # print(f"self.p.name {self.p.name}")
-        # print(f"first save_path {save_path}")
 
-        # 如果在命令行中运行，且有参数 restore, 则会直接加载模型
-        if self.p.restore:
-            self.load_model(save_path)
-            print('Successfully Loaded previous model: ')
-            print(f'{save_path}')
 
         if torch.cuda.is_available():
             torch.cuda.synchronize()
@@ -270,7 +241,7 @@ class Trainer(object):
             # print(f"train_dataset[0] {train_dataset[0]}")
             # print(f"adj in train_dataset[0] {'adj' in train_dataset[0]}")
             # if 'adj' in train_dataset[0]:
-            if self.p.model in ['CapsulePoolingGraphNetwork', 'SAGPool', 'SAGPoolG', 'TopKPool', 'ASAP', 'GIN', 'GCN']:
+            if self.p.model in ['LocalCapsulePoolingNetwork', 'SAGPool', 'SAGPoolG', 'TopKPool', 'ASAP', 'GIN', 'GCN']:
                 train_loader = DataLoader(train_dataset, self.p.batch_size, shuffle=True)
                 val_loader = DataLoader(val_dataset, self.p.batch_size, shuffle=False)
                 test_loader = DataLoader(test_dataset, self.p.batch_size, shuffle=False)
@@ -304,24 +275,17 @@ class Trainer(object):
                     best_val_acc = val_acc
                     self.save_model(save_path)
 
-                # print('seed/fold/epoch {}/{:02d}/{:03d}:  \tTrain_Loss: {:.2f}  \tTrain_Acc {:.2f} \tVal_Loss: {:.4f}'
-                #       ' \tVal_Acc: {:.2f}'
-                #       '  \tbest_Val_Acc: {:.2f}'
-                #                                                                                 .format(self.seed,
-                #                                                                                         fold + 1,
-                #                                                                                         epoch,
-                #                                                                                         train_loss,
-                #                                                                                         train_acc,
-                #                                                                                         val_loss,
-                #                                                                                         val_acc,
-                #                                                                                         best_val_acc))
-            # print('seed/fold/{:02d}/{:03d}:  Train_Loss: {:.4f}\tTrain_Acc {:.4f}\tVal Acc: {:.4f}'
-            #       .format(self.seed,
-            #               fold + 1,
-            #               train_loss,
-            #               train_acc,
-            #               best_val_acc))
-
+                print('seed/fold/epoch {}/{:02d}/{:03d}:  \tTrain_Loss: {:.2f}  \tTrain_Acc {:.2f} \tVal_Loss: {:.4f}'
+                      ' \tVal_Acc: {:.2f}'
+                      '  \tbest_Val_Acc: {:.2f}'
+                                                                                                .format(self.seed,
+                                                                                                        fold + 1,
+                                                                                                        epoch,
+                                                                                                        train_loss,
+                                                                                                        train_acc,
+                                                                                                        val_loss,
+                                                                                                        val_acc,
+                                                                                                        best_val_acc))
             # load best model for testing
             # 对于每一个seed的每一个数据划分，找到其在验证集精度上最高的从模型参数
             self.load_model(save_path)
@@ -356,14 +320,14 @@ class Trainer(object):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Neural Network Trainer Template')
-    # parser.add_argument('-model', dest='model', default='CapsulePoolingGraphNetwork', help='Model to use')
-    parser.add_argument('-model', dest='model', default='MinCutPool', help='Model to use')
+    # parser.add_argument('-model', dest='model', default='LocalCapsulePoolingNetwork', help='Model to use')
+    parser.add_argument('-model', dest='model', default='LocalCapsulePoolingNetwork', help='Model to use')
     parser.add_argument('-data', dest='dataset', default='PROTEINS', type=str, help='Dataset to use')
     parser.add_argument('-epoch', dest='max_epochs', default=100, type=int, help='Max epochs')
     parser.add_argument('-alpha', dest='alpha', default=1e-4, type=float, help='F loss ratio')
-    parser.add_argument('-aux_loss', dest='aux_loss', default='X_loss', choices=['None', 'X_loss', 'S_loss']
-                        , type=str, help='aux_loss mode')
-    parser.add_argument('-readout_mode', dest='readout_mode', default='XU', choices=['X', 'XU']
+    # parser.add_argument('-aux_loss', dest='aux_loss', default='X_loss', choices=['None', 'X_loss', 'S_loss']
+    #                     , type=str, help='aux_loss mode')
+    parser.add_argument('-readout_mode', dest='readout_mode', default='TAR', choices=['Common', 'TAR']
                         , type=str, help='aux_loss mode')
     parser.add_argument('-l2', dest='l2', default=1e-3, type=float, help='L2 regularization')
     parser.add_argument('-num_layers', dest='num_layers', default=3, type=int, help='Number of GCN Layers')
@@ -381,27 +345,11 @@ if __name__ == '__main__':
     parser.add_argument('-name', dest='name', default='test_'+str(uuid.uuid4())[:8], help='Name of the run')
 
     parser.add_argument('-gpu', dest='gpu', default='0', help='GPU to use')
-    parser.add_argument('-restore', dest='restore', action='store_true', help='Model restoring')
-    parser.add_argument('-local_pool_mode', dest='local_pool_mode',
-                        choices=['mode_1', 'mode_2', 'mode_3', 'mode_4', 'mode_5', 'mode_6', 'mode_7', 'mode_8'],
-                        default='mode_1', help="""                                                Local Pooling Mode
-
-                                                mode_1: common mode only with vector length
-                                                mode_2: vector length adjusted by degree
-                                                mode_3: adjusted vector length added by global score
-                                                mode_4: adjusted vector length added by global score and node degree
-                                                """)
+    # parser.add_argument('-restore', dest='restore', action='store_true', help='Model restoring')
 
 
     args = parser.parse_args()
-    # 如果在命令行中写了参数 restore， 则会出发restore--action=True, 则不会重设args.name
-    # 而如果在命令行中没有写参数restore，则不触发restore--action=False，之后便会重设args.name
-    # Todo: 这里windows下的时间戳 数据位数 可能不对，不能使用strftime
-    if not args.restore:
-        # args.name = args.name + '_' + time.strftime('%d_%m_%Y') + '_' + time.strftime('%H:%M:%S')
-        # args.name = args.name + '_' + time.strftime('%Y_%m_%D') + '_' + time.strftime('%H:%M:%S')
-        args.name = '{}_{}_run'.format(args.dataset, args.model)
-
+    args.name = '{}_{}_run'.format(args.dataset, args.model)
     print('Starting runs...')
     print(args)
     # get 20 run average
@@ -429,7 +377,7 @@ if __name__ == '__main__':
         torch.backends.cudnn.deterministic = True
 
 
-        args.name = '{}_{}_run'.format(args.dataset, args.model)
+        # args.name = '{}_{}_run'.format(args.dataset, args.model)
 
         # start training the model
         model = Trainer(args, seed)
@@ -445,7 +393,6 @@ if __name__ == '__main__':
     # 将所有seed上的验证精度和测试精度取平均和标准差
     print('Val Accuracy: {:.3f} ± {:.3f} Test Accuracy: {:.3f} ± {:.3f}'.format(np.mean(avg_val), np.std(avg_val),
                                                                                 np.mean(avg_test), np.std(avg_test)))
-    # file_name = osp.join('.\\result', str(args.dataset) + '.txt')
     file_name = './result/' + args.dataset + '.txt'
     with open(file_name, 'w')as f:
         f.write("args.ratio" +  str(args.ratio) + '\n')

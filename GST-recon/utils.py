@@ -7,7 +7,7 @@ from torch_sparse import spspmm
 from torch_scatter import scatter_mean, scatter_max, scatter_add
 
 
-def readout_1(x, edge_index, edge_weight, batch):
+def common_readout(x, edge_index, edge_weight, batch):
     x_sum = scatter_add(x, batch, dim=0)
     x_mean = scatter_mean(x, batch, dim=0)
     x_max, _ = scatter_max(x, batch, dim=0)
@@ -214,7 +214,7 @@ def sparse_to_dense(index, value, m, n):
     return adj
 
 
-def F_norm_x_loss(x_l_above, x):
+def get_loss_stability(x_l_above, x):
     x_l_above_merge = x_l_above.T @ x_l_above
     x_merge = x.T @ x
     F_matrix = x_l_above_merge - x_merge

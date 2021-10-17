@@ -15,7 +15,7 @@ def dense_readout(x):
     # (batch, 3*hidden)
     return torch.cat((x_sum, x_mean, x_max), dim=-1)
 
-def readout_1(x, batch):
+def common_readout(x, batch):
     x_sum = scatter_add(x, batch, dim=0)
     x_mean = scatter_mean(x, batch, dim=0)
     x_max, _ = scatter_max(x, batch, dim=0)
@@ -222,7 +222,7 @@ def sparse_to_dense(index, value, m, n):
     return adj
 
 
-def F_norm_x_loss(x_l_above, x):
+def get_loss_stability(x_l_above, x):
     x_l_above_merge = x_l_above.T @ x_l_above
     x_merge = x.T @ x
     F_matrix = x_l_above_merge - x_merge

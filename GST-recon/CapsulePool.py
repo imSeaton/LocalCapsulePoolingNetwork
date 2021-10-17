@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch_scatter import scatter_add, scatter_max, scatter_mean
 from torch_geometric.utils import add_remaining_self_loops, remove_self_loops, softmax
 from torch_geometric.nn.pool.topk_pool import topk
-from utils import squash_1, squash_2, graph_connectivity,  F_norm_x_loss
+from utils import squash_1, squash_2, graph_connectivity,  get_loss_stability
 from torch_geometric.nn import GCNConv
 
 # torch.set_num_threads(1)
@@ -165,11 +165,11 @@ class CapsulePooling(nn.Module):
             batch=batch,
             N=N)
         x_l_above = x_l_above.squeeze(dim=0)
-        x_loss = F_norm_x_loss(x_l_above, x)
+        loss_stability = get_loss_stability(x_l_above, x)
         # return x, edge_index, edge_weight, batch, S_index, S_value, perm
         S = sparse_to_dense(S_index, S_value, N, int(N * self.ratio))
         adj = sparse_to_dense(edge_index, edge_weight, int(N * self.ratio), int(N * self.ratio))
-        return x, adj, batch, perm, S, x_loss
+        return x, adj, batch, perm, S, loss_stability
 
     def __repr__(self):
         return '{}({}, ratio={})'.format(self.__class__.__name__, self.in_channels, self.ratio)

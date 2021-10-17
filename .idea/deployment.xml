@@ -1,39 +1,32 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="suzidong@3860i551q7.zicp.vip:20529 password" remoteFilesAllowedToDisappearOnAutoupload="false">
+  <component name="PublishConfigData" autoUpload="Always" remoteFilesAllowedToDisappearOnAutoupload="false">
     <serverData>
-      <paths name="suzidong@116.62.200.72:37084">
+      <paths name="suzidong@172.18.112.201:22 password">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/data/suzidong/CapsulePoolingGraphNetwork" local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="suzidong@172.18.112.201:22 password (1)">
         <serverdata>
           <mappings>
             <mapping local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
-      <paths name="suzidong@3670348hh2.zicp.vip:12304">
+      <paths name="suzidong@172.18.112.211:22">
         <serverdata>
           <mappings>
             <mapping local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
-      <paths name="suzidong@3670348hh2.zicp.vip:36465">
+      <paths name="suzidong@172.18.112.211:22 (1)">
         <serverdata>
           <mappings>
             <mapping local="$PROJECT_DIR$" web="/" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="suzidong@3860i551q7.zicp.vip:20529">
-        <serverdata>
-          <mappings>
-            <mapping deploy="/data/suzidong/CapsulePoolingGraphNetwork" local="$PROJECT_DIR$" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="suzidong@3860i551q7.zicp.vip:20529 password">
-        <serverdata>
-          <mappings>
-            <mapping deploy="/data/suzidong/CapsulePoolingGraphNetwork" local="$PROJECT_DIR$" />
           </mappings>
         </serverdata>
       </paths>
