@@ -8,6 +8,7 @@ from torch_scatter import scatter_mean, scatter_max, scatter_add, scatter_softma
 from utils import squash_1, squash_2, common_readout, readout_2, sparse_to_dense, get_loss_stability
 from disentangle import LinearDisentangle
 from torch_geometric.utils import add_remaining_self_loops, remove_self_loops
+from constants import SquashFuncType
 
 
 class LocalCapsulePoolingNetwork(nn.Module):
@@ -20,23 +21,25 @@ class LocalCapsulePoolingNetwork(nn.Module):
         self.dropout_att = dropout_att
         self.num_layers = num_layers
         self.readout_mode = readout_mode
-        if dataset_name in ['DD', 'NCI109', 'NCI1', 'MUTAG', 'ENZYMES', 'FRANKENSTEIN', 'REDDIT-BINARY']:
+        if SquashFuncType.is_biological(dataset_name):
             self.squash = squash_1
             from utils import squash_1 as squash
-        elif dataset_name in ['PROTEINS',  'IMDB-BINARY', 'IMDB-MULTI', 'REDDIT-MULTI', 'COLLAB']:
+        elif SquashFuncType.is_social(dataset_name):
             self.squash = squash_2
             from utils import squash_2 as squash
         else:
-            print('Wrong Dataset')
+            raise ValueError(f'Unsupported dataset: {dataset_name}')
         self.dataset_name = dataset_name
         # Todo 这里需要判断是否需要参数化形式
 
 
         self.bn_disen_0 = nn.BatchNorm1d(dataset.num_features)
         self.disentangle_num = 4
-        self.disen = torch.nn.ModuleList()
-        for i in range(self.disentangle_num):
-            self.disen.append(LinearDisentangle(dataset.num_features, hidden // self.disentangle_num))
+        # NOTE: disentangle module is defined but currently not used in forward pass
+        # Uncomment the following if you want to enable disentanglement:
+        # self.disen = torch.nn.ModuleList()
+        # for i in range(self.disentangle_num):
+        #     self.disen.append(LinearDisentangle(dataset.num_features, hidden // self.disentangle_num))
         self.bn_disen_1 = nn.BatchNorm1d(hidden)
         # Local Pooling
         # self.conv1 = GCNConv(hidden, hidden)

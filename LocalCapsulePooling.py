@@ -7,28 +7,30 @@ from torch_geometric.nn.pool.topk_pool import topk
 from utils import squash_1, squash_2, graph_connectivity
 from SparseGCNConv import SparseGCNConv
 from torch_geometric.nn import GCNConv
+from constants import SquashFuncType
+
 
 class LocalCapsulePooling(nn.Module):
     """输入一个batch的graph，对其进行池化，选出重要的cluster"""
 
-    def __init__(self, hidden, ratio, dropout_att=0, dataset_name='DD'):
+    def __init__(self, hidden: int, ratio: float, dropout_att: float = 0, dataset_name: str = 'DD', num_routing: int = 3):
         super(LocalCapsulePooling, self).__init__()
         self.in_channels = hidden
         self.out_channels = hidden
         self.ratio = ratio
-        # self.negative_slope = negative_slope
         self.dropout_att = dropout_att
-        # self.gcn_transform = GCNConv(self.in_channels, self.out_channels)
+        self.num_routing = num_routing  # Configurable routing iterations
         self.gcn_transform = GCNConv(self.in_channels, self.out_channels)
         self.bn_feat = nn.BatchNorm1d(hidden)
         self.bn_feat_2 = nn.BatchNorm1d(hidden)
         self.score_add = nn.Linear(self.in_channels, 1)
-        if dataset_name in ['DD', 'MUTAG', 'NCI109', 'NCI1', 'ENZYMES', 'FRANKENSTEIN', 'REDDIT-BINARY',]:
+
+        if SquashFuncType.is_biological(dataset_name):
             self.squash = squash_1
-        elif dataset_name in ['PROTEINS',  'IMDB-BINARY', 'IMDB-MULTI',  'REDDIT-MULTI', 'COLLAB']:
+        elif SquashFuncType.is_social(dataset_name):
             self.squash = squash_2
         else:
-            print('Wrong Dataset')
+            raise ValueError(f'Unsupported dataset: {dataset_name}')
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -55,8 +57,8 @@ class LocalCapsulePooling(nn.Module):
         # 一层GCN
         # ToDo
         x_pool_j = self.gcn_transform(x=x, edge_index=edge_index, edge_weight=edge_weight)
+        x_pool_j = self.squash(x_pool_j, dim=-1)  # Squash before BN to preserve vector direction
         x_pool_j = self.bn_feat(x_pool_j)
-        x_pool_j = self.squash(x_pool_j, dim=-1)
         # print(f"x_pool_j.grad {x_pool_j.requires_grad} \t {x_pool_j.grad}\t\t 'x_pool_j[0][:5]' {x_pool_j[0][:2].data}")
         # x_pool_j = F.relu(x_pool_j)
         # print(f"x.shape after GCN {x_pool_j.shape}")
@@ -72,9 +74,8 @@ class LocalCapsulePooling(nn.Module):
         # score 为每个低层节点到高层节点的隶属程度
         b_ij = edge_weight.clone().detach()
         # 动态路由
-        num_routing = 3
         x_pool_j_detach = x_pool_j.detach()
-        for i in range(num_routing - 1):
+        for i in range(self.num_routing - 1):
             # 对一个节点属于的所有cluster对softmax
             c_ij = softmax(b_ij, edge_index[1], num_nodes=N)
             # score = softmax(score, edge_index[0], num_nodes=N)
@@ -94,7 +95,7 @@ class LocalCapsulePooling(nn.Module):
             # shape of score: (E)
             # score += (cluster_representation * x_pool_j_detach).sum(dim=1)
             b_ij += (cluster_representation_per_edge * x_pool_j_detach).sum(dim=-1)
-        # (E)
+        # (E) - final routing iteration uses all num_routing iterations
         c_ij = softmax(b_ij, edge_index[1], num_nodes=N)
         x_pool_j_weighted = c_ij.unsqueeze(dim=-1) * x_pool_j
         cluster_representation = scatter_add(x_pool_j_weighted, edge_index[0], dim=0)
@@ -105,6 +106,9 @@ class LocalCapsulePooling(nn.Module):
         cluster_representation = self.squash(cluster_representation)
         # cluster_representation = F.relu(cluster_representation)
         # print(f"cluster_representation.shape {cluster_representation.shape}")
+
+        # Residual connection to preserve low-level information
+        cluster_representation = cluster_representation + x[:cluster_representation.size(0)]
 
         """计算cluster 得分"""
         # lenth of cluster_representation_vector

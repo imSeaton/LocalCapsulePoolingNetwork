@@ -12,6 +12,7 @@ from LocalCapsulePoolingNetwork import LocalCapsulePoolingNetwork
 from utils import margin_loss
 from data_processing import get_dataset
 from other_models import *
+from constants import SquashFuncType
 
 # 禁止网络加速
 torch.backends.cudnn.benchmark = False
@@ -29,6 +30,10 @@ class Trainer(object):
             self.device = torch.device('cpu')
         self.p.use_node_attr = (self.p.dataset == 'FRANKENSTEIN')
         self.loadData(self.p.model)
+        # Early stopping
+        self.early_stopping_patience = getattr(self.p, 'early_stopping_patience', 50)
+        self.early_stopping_counter = 0
+        self.best_val_loss = float('inf')
 
         # build the model
         self.model = None
@@ -147,6 +152,8 @@ class Trainer(object):
             # 对一个graph上的平均 loss进行回传
             loss = F.nll_loss(out, ground_truth.view(-1)) + aux_loss * self.p.alpha
             loss.backward()
+            # Gradient clipping to prevent exploding gradients
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             # 单个graph的loss * batch中graph的数量
             total_loss += loss.item() * self.num_graphs(data)
             pred = out.max(1)[1]
@@ -258,6 +265,9 @@ class Trainer(object):
 
             # 每个epoch中的最佳验证和测试精度
             best_val_acc, best_test_acc = 0.0, 0.0
+            # Reset early stopping state for each fold
+            self.early_stopping_counter = 0
+            self.best_val_loss = float('inf')
 
             # 对于每折数据，训练max_epochs个epoch
             train_acc, train_loss = 0, 0
@@ -274,6 +284,16 @@ class Trainer(object):
                 if val_acc >= best_val_acc:
                     best_val_acc = val_acc
                     self.save_model(save_path)
+
+                # Early stopping based on validation loss
+                if val_loss < self.best_val_loss:
+                    self.best_val_loss = val_loss
+                    self.early_stopping_counter = 0
+                else:
+                    self.early_stopping_counter += 1
+                    if self.early_stopping_counter >= self.early_stopping_patience:
+                        print(f'    [Early stopping] No improvement for {self.early_stopping_patience} epochs at epoch {epoch}')
+                        break
 
                 print('seed/fold/epoch {}/{:02d}/{:03d}:  \tTrain_Loss: {:.2f}  \tTrain_Acc {:.2f} \tVal_Loss: {:.4f}'
                       ' \tVal_Acc: {:.2f}'
@@ -339,6 +359,7 @@ if __name__ == '__main__':
     parser.add_argument('-dropout_att', dest='dropout_att', default=0.5, type=float, help='dropout on attention scores')
     parser.add_argument('-lr', dest='lr', default=0.001, type=float, help='Learning rate')
     parser.add_argument('-ratio', dest='ratio', default=0.5, type=float, help='ratio')
+    parser.add_argument('-early_stopping_patience', dest='early_stopping_patience', default=50, type=int, help='Early stopping patience (epochs)')
 
     parser.add_argument('-folds', dest='folds', default=10, type=int, help='Cross validation folds')
 
