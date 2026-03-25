@@ -185,20 +185,6 @@ def transfer_c_index(c, batch):
     return new_c
 
 
-def sparse_to_dense(edge_index, edge_weight, num_nodes):
-    """
-    将稀疏的邻接矩阵转变为稠密类型的，可以进行A@X的操作
-    :param edge_index: (2, num_edges)
-    :param edge_weight: (num_edges,)
-    :return:  (num_nodes, num_nodes)
-    """
-    A = edge_weight.new_zeros(num_nodes, num_nodes)
-    row, col = edge_index[0], edge_index[1]
-    A[row, col] = edge_weight
-    # shape of A: (num_nodes, num_nodes)
-    return A
-
-
 def F_norm_loss(S_index, S_value, X, N=4, kN=4, edge_index=None, edge_weight=None):
     """计算SS_T 与 XX_T 的F范数损失"""
     S_index, S_value = coalesce(S_index, S_value, N, kN)
@@ -214,12 +200,7 @@ def F_norm_loss(S_index, S_value, X, N=4, kN=4, edge_index=None, edge_weight=Non
     return loss
 
 
-def sparse_to_dense(index, value, m, n):
-    # (2, e) -> (N, N)
-    adj = torch.zeros(m, n, dtype=value.dtype, device=value.device)
-    row, col = index[0], index[1]
-    adj[row, col] = value
-    return adj
+
 
 
 def get_loss_stability(x_l_above, x):
