@@ -59,10 +59,66 @@ Pooled Graph (ratio * N nodes, preserved structure)
 
 *Note: E = number of edges, d = feature dimension, r = routing iterations (typically 3).*
 
+## Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `-model` | `LocalCapsulePoolingNetwork` | Model architecture |
+| `-data` | `PROTEINS` | Dataset name |
+| `-epoch` | `100` | Maximum training epochs |
+| `-alpha` | `1e-4` | Auxiliary loss weight (F-norm stability) |
+| `-readout_mode` | `TAR` | Readout mode: `TAR` (task-aware) or `Common` |
+| `-l2` | `1e-3` | L2 regularization coefficient |
+| `-num_layers` | `3` | Number of GCN + pooling layers |
+| `-lr_decay_step` | `50` | Learning rate decay interval (epochs) |
+| `-lr_decay_factor` | `0.5` | Learning rate decay multiplier |
+| `-batch` | `128` | Batch size |
+| `-hid_dim` | `128` | Hidden dimension |
+| `-dropout_att` | `0.5` | Dropout rate on attention scores |
+| `-lr` | `0.001` | Initial learning rate |
+| `-ratio` | `0.5` | Pooling ratio (fraction of nodes retained) |
+| `-folds` | `10` | Cross-validation folds |
+| `-early_stopping_patience` | `50` | Epochs to wait before early stopping |
+| `-gpu` | `0` | GPU device ID (`-1` for CPU) |
+
+## Supported Datasets
+
+Datasets are automatically downloaded via `torch_geometric.datasets.TUDataset`.
+
+| Dataset | Graphs | Classes | Nodes (avg) | Edges (avg) |
+|---------|--------|---------|-------------|-------------|
+| PROTEINS | 1,113 | 2 | 39.1 | 145.6 |
+| ENZYMES | 600 | 6 | 32.6 | 124.3 |
+| DD | 1,178 | 2 | 284.3 | 715.7 |
+| MUTAG | 188 | 2 | 17.9 | 39.6 |
+| NCI1 | 4,110 | 2 | 29.9 | 64.6 |
+| IMDB-BINARY | 1,000 | 2 | 19.8 | 193.1 |
+| Reddit-BINARY | 2,000 | 2 | 429.6 | 497.4 |
+| COLLAB | 5,000 | 3 | 74.5 | 2,457.3 |
+
+## Project Structure
+
+```
+LocalCapsulePoolingNetwork/
+├── LocalCapsulePooling.py         # Core pooling layer (capsule routing)
+├── LocalCapsulePoolingNetwork.py  # Full model (GCN + pooling + readout)
+├── main.py                        # Training CLI with cross-validation
+├── data_processing.py             # Dataset loading and preprocessing
+├── utils.py                       # Squash functions, graph ops, loss
+├── helper.py                      # GPU setup utilities
+├── disentangle.py                 # Linear disentanglement module
+├── SparseGCNConv.py               # Sparse GCN implementation
+├── DenseGCNConv.py                # Dense GCN implementation
+├── constants.py                   # Dataset classification enum
+├── other_models.py                # Baseline pooling methods (SAGPool, TopK, etc.)
+├── ASAP/                         # ASAP pooling variant
+└── GST-recon/                    # Graph reconstruction experiments
+```
+
 ## Installation
 
 ```bash
-pip install torch torch-geometric torch-scatter
+pip install torch torch-geometric torch-scatter torch-sparse
 ```
 
 ## Usage
@@ -78,6 +134,21 @@ model = LocalCapsulePoolingNetwork(
     dropout_att=0.5,
     readout_mode='TAR'
 )
+```
+
+## Training Recipe
+
+```bash
+# 10-fold cross-validation (recommended for publication)
+python main.py -data PROTEINS -model LocalCapsulePoolingNetwork -folds 10 -seed 7
+
+# Train on MUTAG with custom parameters
+python main.py -model LocalCapsulePoolingNetwork -data MUTAG -epoch 200 -ratio 0.3
+
+# Run baselines for comparison
+python main.py -model SAGPool -data PROTEINS -ratio 0.5
+python main.py -model TopKPool -data PROTEINS -ratio 0.5
+python main.py -model DiffPool -data PROTEINS -ratio 0.5
 ```
 
 ## Citation
